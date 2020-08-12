@@ -3,16 +3,16 @@ import subprocess
 import sys
 import os
 import struct
+import json
 import wave
-
-#Download and build
-#https://github.com/madler/zlib/tree/master/contrib/blast
-BLAST_PATH = "./blast"
+import explode
 
 parser = argparse.ArgumentParser(description='Extract Neverhood BLB')
 parser.add_argument('blb_file')
 parser.add_argument('-o', '--output', default="files/",
     help="output directory")
+parser.add_argument('-c', '--create', action='store_true',
+    help='create json file for file reconstruction')
 parser.add_argument('-d', '--decode', action='store_true',
     help='convert files to more "modern" format')
 parser.add_argument('-v', '--verbose', action="store_true",
@@ -55,6 +55,9 @@ class Entry:
 
 blb = open(args.blb_file, "rb")
 
+if args.create:
+    json_data = {}
+
 #Get file size
 blb.seek(0, os.SEEK_END)
 blb_size = blb.tell()
@@ -74,6 +77,9 @@ extDataSize = struct.unpack("H", extDataSize)[0]
 fileSize = struct.unpack("I", fileSize)[0]
 fileCount = struct.unpack("I", fileCount)[0]
 
+if args.create:
+    json_data['header'] = [id1, id2, extDataSize, fileSize, fileCount]
+
 
 #Check if file is correct
 if(id1 != 0x2004940 or id2 != 7 or fileSize != blb_size):
@@ -85,13 +91,21 @@ if(debug):
 #Load file hashes
 files = []
 
+if args.create:
+    json_data['files'] = []
+
 for i in range(fileCount):
     fileHash = blb.read(4) #UINT32LE
     fileHash = struct.unpack("I", fileHash)[0]
     entry = Entry()
     entry.fileHash = fileHash
     files.append(entry)
-#    print(fileHash)
+    if(args.create):
+        json_data['files'].append({})
+        json_data['files'][i]['fileHash'] = fileHash
+
+    if(debug):
+        print("Num: {} hash: {}".format(i, fileHash))
 
 
 extDataOffsets = []
@@ -102,14 +116,26 @@ for i in range(fileCount):
     files[i].type = struct.unpack("b", blb.read(1))[0] #Byte
     files[i].comprType = struct.unpack("b", blb.read(1))[0] #Byte
     files[i].extData = None
-    extDataOffsets.append(struct.unpack("H", blb.read(2))[0]) #UINT16LE
+    extDataOffset = struct.unpack("H", blb.read(2))[0]
+    extDataOffsets.append(extDataOffset) #UINT16LE
     files[i].timeStamp = struct.unpack("I", blb.read(4))[0] #UINT32LE
     files[i].offset = struct.unpack("I", blb.read(4))[0] #UINT32LE
     files[i].diskSize = struct.unpack("I", blb.read(4))[0] #UINT32LE
     files[i].size = struct.unpack("I", blb.read(4))[0] #UINT32LE
 
+    if(args.create):
+        json_data['files'][i]['type'] = files[i].type
+        json_data['files'][i]['comprType'] = files[i].comprType
+        json_data['files'][i]['extDataOffset'] = extDataOffset
+        json_data['files'][i]['extData'] = ""
+        json_data['files'][i]['timeStamp'] = files[i].timeStamp
+        json_data['files'][i]['offset'] = files[i].offset
+        json_data['files'][i]['diskSize'] = files[i].diskSize
+        json_data['files'][i]['size'] = files[i].size
+        json_data['files'][i]['realPath'] = out_dir+"file"+str(i)
+
     if(debug):
-        print("Num: {} Type: {} ComprType: {} extDataOffset: {} timestamp: {} offset: diskSize: {} size: {}".format(i, files[i].type, files[i].comprType, 0, files[i].timeStamp, files[i].offset, files[i].diskSize, files[i].size))
+        print("Num: {} Type: {} ComprType: {} extDataOffset: {} timestamp: {} offset: {} diskSize: {} size: {}".format(i, files[i].type, files[i].comprType, extDataOffset, files[i].timeStamp, files[i].offset, files[i].diskSize, files[i].size))
 
 #Load ext data
 #extData is used to decompress audio files and maybe something else
@@ -119,10 +145,17 @@ if(extDataSize > 0):
     for i in range(fileCount):
         if(extDataOffsets[i] > 0):
             files[i].extData = extData[extDataOffsets[i] - 1]
+            if(args.create):
+                json_data['files'][i]['extData'] = files[i].extData
         else:
             files[i].extData = None
         if(debug):
             print("Num: {} extData: {}".format(i, files[i].extData))
+
+
+if args.create:
+    with open('data.json', 'w') as outfile:
+        json.dump(json_data, outfile)
 
 def decompress_audio(data, shift):
     out = []
@@ -137,7 +170,7 @@ def decompress_audio(data, shift):
             one += 256
 
         iCurValue += one
-        if((iCurValue<<shift) < 32768):
+        if((iCurValue<<shift) < 32768 and (iCurValue<<shift) >= -32768):
             out.append( struct.pack("h", iCurValue<<shift) )
     return out
 
@@ -153,17 +186,8 @@ def extract(fileNum):
 
     #Compressed file
     elif(file.comprType == 3):
-        compressed = blb.read(file.size)
-
-        #There's some issue with blast, some files can't be decompressed, so we kill process after 5 seconds
-        try:
-            p = subprocess.Popen(["timeout", "5" , BLAST_PATH], stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=open(os.devnull, 'wb'))
-            p.stdin.write(compressed)
-            fileData = p.communicate()[0]
-            p.stdin.close()
-            p.stdout.close()
-        except:
-            fileData = None
+        compressed = blb.read(file.diskSize)
+        fileData = explode.explode(compressed)
 
     return fileData
 
@@ -189,8 +213,8 @@ if __name__ == '__main__':
                     if(shift != 255):
                         for sample in data:
                             wav_file.writeframes(sample)
-#                    else:
-#                        wav_file.writeframes()
+                    else:
+                        wav_file.writeframes(data)
                     wav_file.close()
 
             #10 - Video
