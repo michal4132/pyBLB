@@ -7,12 +7,6 @@ pyBLB is a Python library for extracting Neverhood BLB files.
 git clone https://github.com/michal4132/pyBLB
 ```
 
-Download and build blast from this repository:
-https://github.com/madler/zlib/tree/master/contrib/blast
-and edit BLAST_PATH in pyBLB.py
-
-
-
 ## Usage
 
 ```bash
