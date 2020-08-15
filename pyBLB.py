@@ -1,3 +1,4 @@
+import platform
 import argparse
 import subprocess
 import sys
@@ -5,7 +6,8 @@ import os
 import struct
 import json
 import wave
-import pwexplode
+if(platform.system() == "Linux"):
+    import pklib
 
 parser = argparse.ArgumentParser(description='Extract Neverhood BLB')
 parser.add_argument('blb_file')
@@ -99,7 +101,6 @@ def id2fileName(id):
         fileName = "file{}_audio".format(id)
     elif files[id].type == 10:
         fileName = "file{}_video".format(id)
-    print(fileName)
     return fileName
 
 #Load file hashes
@@ -117,10 +118,6 @@ for i in range(fileCount):
     if(args.create):
         json_data['files'].append({})
         json_data['files'][i]['fileHash'] = fileHash
-
-    if(debug):
-        print("Num: {} hash: {}".format(i, fileHash))
-
 
 extDataOffsets = []
 
@@ -149,27 +146,28 @@ for i in range(fileCount):
         json_data['files'][i]['realPath'] = out_dir+id2fileName(i)
 
     if(debug):
-        print("Num: {} Type: {} ComprType: {} extDataOffset: {} timestamp: {} offset: {} diskSize: {} size: {}".format(i, files[i].type, files[i].comprType, extDataOffset, files[i].timeStamp, files[i].offset, files[i].diskSize, files[i].size))
+        print("Num: {} FileHash: {} FileType: {} ComprType: {} extDataOffset: {} timestamp: {} offset: {} diskSize: {} size: {}".format(i, files[i].fileHash, files[i].type, files[i].comprType, extDataOffset, files[i].timeStamp, files[i].offset, files[i].diskSize, files[i].size))
 
 #Load ext data
 #extData is used to decompress audio files and maybe something else
 if(extDataSize > 0):
     extData = blb.read(extDataSize)
-    test_f = open("extData", "wb")
-    test_f.write(extData)
-    test_f.close()
-    print("DATA LEN: {}".format(len(extData)))
-#    extData = struct.unpack('b', extData)
     for i in range(fileCount):
+        #BLBs can use 4 bytes or 1 byte
         if(extDataOffsets[i] > 0):
-            #Read 4 bytes from extData
-            files[i].extData = bytearray(4)
-            files[i].extData[0] = extData[extDataOffsets[i] - 1]
-            files[i].extData[1] = extData[extDataOffsets[i]    ]
-            files[i].extData[2] = extData[extDataOffsets[i] + 1]
-            files[i].extData[3] = extData[extDataOffsets[i] + 2]
-            if(args.create):
-                json_data['files'][i]['extData'] = struct.unpack("I", files[i].extData)[0]
+            #a.blb - 1 byte
+            if(extDataSize == len(files)):
+                files[i].extData = extData[extDataOffsets[i] - 1]
+            else:
+                #Other BLBs use 4 bytes
+                #Read 4 bytes from extData
+                files[i].extData = bytearray(4)
+                files[i].extData[0] = extData[extDataOffsets[i] - 1]
+                files[i].extData[1] = extData[extDataOffsets[i]    ]
+                files[i].extData[2] = extData[extDataOffsets[i] + 1]
+                files[i].extData[3] = extData[extDataOffsets[i] + 2]
+                if(args.create):
+                    json_data['files'][i]['extData'] = struct.unpack("I", files[i].extData)[0]
         else:
             files[i].extData = b"\x00\x00\x00\x00"
         if(debug):
@@ -207,20 +205,14 @@ def extract(fileNum):
     if(file.comprType == 1):
         fileData = blb.read(file.diskSize)
 
-#    #Compressed file
+    #Compressed file
     elif(file.comprType == 3):
         compressed = blb.read(file.diskSize)
-        fileData = pwexplode.explode(compressed)
-#        try:
-#            p = subprocess.Popen(["timeout", "5" , "./blast"], stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=open(os.devnull, 'wb'))
-#            p.stdin.write(compressed)
-#            fileData = p.communicate()[0]
-#            p.stdin.close()
-#            p.stdout.close()
-#        except:
-#            fileData = None
 
-
+        if(platform.system() == "Linux"):
+            fileData = pklib.decompress(compressed)
+        else:
+            fileData = pwexplode.explode(compressed)
 
     return fileData
 
@@ -258,11 +250,10 @@ if __name__ == '__main__':
                     out = os.popen(ffmpeg_cmd).read()
             #others
             else:
-#                print(files[i].type)
                 f.write(data)
         f.close()
         files_processed += 1
-#        print("{}/{}      ".format(files_processed, fileCount), end="\r")
+        print("{}/{}      ".format(files_processed, fileCount), end="\r")
     print()
 
 blb.close()
