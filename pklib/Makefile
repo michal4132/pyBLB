@@ -1,2 +1,2 @@
 pklib: pklib.h
-	g++ -fPIC buffers.cpp crc32.c explode.c implode.c -shared -o pklib.so
+	g++ -fPIC crc32.c explode.c implode.c -shared -o pklib.so
