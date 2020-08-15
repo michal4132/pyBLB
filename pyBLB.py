@@ -5,7 +5,7 @@ import os
 import struct
 import json
 import wave
-import explode
+import pwexplode
 
 parser = argparse.ArgumentParser(description='Extract Neverhood BLB')
 parser.add_argument('blb_file')
@@ -88,6 +88,20 @@ if(id1 != 0x2004940 or id2 != 7 or fileSize != blb_size):
 if(debug):
     print("ID1: {}\nID2: {}\nextDataSize: {}\nfileSize: {}\nfileCount: {}".format(id1, id2, extDataSize, fileSize, fileCount))
 
+
+def id2fileName(id):
+    fileName = "file{}".format(id)
+    if files[id].type == 2:
+        fileName = "file{}_image.nhi".format(id)
+    elif files[id].type == 3:
+        fileNmae = "files{}_palette".format(id)
+    elif files[id].type == 7 or files[id].type == 8:
+        fileName = "file{}_audio".format(id)
+    elif files[id].type == 10:
+        fileName = "file{}_video".format(id)
+    print(fileName)
+    return fileName
+
 #Load file hashes
 files = []
 
@@ -132,7 +146,7 @@ for i in range(fileCount):
         json_data['files'][i]['offset'] = files[i].offset
         json_data['files'][i]['diskSize'] = files[i].diskSize
         json_data['files'][i]['size'] = files[i].size
-        json_data['files'][i]['realPath'] = out_dir+"file"+str(i)
+        json_data['files'][i]['realPath'] = out_dir+id2fileName(i)
 
     if(debug):
         print("Num: {} Type: {} ComprType: {} extDataOffset: {} timestamp: {} offset: {} diskSize: {} size: {}".format(i, files[i].type, files[i].comprType, extDataOffset, files[i].timeStamp, files[i].offset, files[i].diskSize, files[i].size))
@@ -141,16 +155,25 @@ for i in range(fileCount):
 #extData is used to decompress audio files and maybe something else
 if(extDataSize > 0):
     extData = blb.read(extDataSize)
+    test_f = open("extData", "wb")
+    test_f.write(extData)
+    test_f.close()
+    print("DATA LEN: {}".format(len(extData)))
 #    extData = struct.unpack('b', extData)
     for i in range(fileCount):
         if(extDataOffsets[i] > 0):
-            files[i].extData = extData[extDataOffsets[i] - 1]
+            #Read 4 bytes from extData
+            files[i].extData = bytearray(4)
+            files[i].extData[0] = extData[extDataOffsets[i] - 1]
+            files[i].extData[1] = extData[extDataOffsets[i]    ]
+            files[i].extData[2] = extData[extDataOffsets[i] + 1]
+            files[i].extData[3] = extData[extDataOffsets[i] + 2]
             if(args.create):
-                json_data['files'][i]['extData'] = files[i].extData
+                json_data['files'][i]['extData'] = struct.unpack("I", files[i].extData)[0]
         else:
-            files[i].extData = None
+            files[i].extData = b"\x00\x00\x00\x00"
         if(debug):
-            print("Num: {} extData: {}".format(i, files[i].extData))
+            print("Num: {} extData: {}".format(i, struct.unpack("I", files[i].extData)[0]))
 
 
 if args.create:
@@ -184,10 +207,20 @@ def extract(fileNum):
     if(file.comprType == 1):
         fileData = blb.read(file.diskSize)
 
-    #Compressed file
+#    #Compressed file
     elif(file.comprType == 3):
         compressed = blb.read(file.diskSize)
-        fileData = explode.explode(compressed)
+        fileData = pwexplode.explode(compressed)
+#        try:
+#            p = subprocess.Popen(["timeout", "5" , "./blast"], stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=open(os.devnull, 'wb'))
+#            p.stdin.write(compressed)
+#            fileData = p.communicate()[0]
+#            p.stdin.close()
+#            p.stdout.close()
+#        except:
+#            fileData = None
+
+
 
     return fileData
 
@@ -195,7 +228,7 @@ if __name__ == '__main__':
     files_processed = 0
     print("0/{}      ".format(fileCount), end="\r")
     for i in range(fileCount):
-        f = open(out_dir+"file"+str(i), "wb")
+        f = open(out_dir+id2fileName(i), "wb")
         data = extract(i)
         if(data is not None):
             #7 and 8 - audio
@@ -221,14 +254,15 @@ if __name__ == '__main__':
             elif(files[i].type == 10):
                 f.write(data)
                 if(decode):
-                    ffmpeg_cmd = "ffmpeg -i {0}file{1} -vcodec libx264 {0}mp4/file{1}.mp4".format(out_dir, str(i))
+                    ffmpeg_cmd = "ffmpeg -i {0}{1} -vcodec libx264 {0}mp4/{1}.mp4".format(out_dir, id2fileName(i))
                     out = os.popen(ffmpeg_cmd).read()
             #others
             else:
+#                print(files[i].type)
                 f.write(data)
         f.close()
         files_processed += 1
-        print("{}/{}      ".format(files_processed, fileCount), end="\r")
+#        print("{}/{}      ".format(files_processed, fileCount), end="\r")
     print()
 
 blb.close()
