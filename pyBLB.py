@@ -4,6 +4,7 @@ import os
 import struct
 import json
 import wave
+from PIL import Image
 if(platform.system() == "Linux"):
     import pklib
 else:
@@ -19,8 +20,11 @@ class Entry:
     diskSize = None #size of file in BLB
     size = None #real size of file
 
+def unpack(file, count, dtype):
+    return struct.unpack(dtype, file.read(count))[0]
 
 class BLBExtract:
+    #TODO Remove this
     def unpack(self, count, dtype):
         return struct.unpack(dtype, self.blb.read(count))[0]
 
@@ -163,6 +167,147 @@ class BLBExtract:
     def __exit__(self):
         self.blb.close()
 
+class ImageBLB:
+    def __init__(self, file_path, debug=False):
+        self.file = open(file_path, "rb")
+        self.debug = debug
+        self.palette = []
+        self.pixels = []
+        self.w = None
+        self.h = None
+        self.reportedWidth = None
+        self.rle = None
+        self.position_x = 0
+        self.position_y = 0
+
+        self.BF_RLE            = 1
+        self.BF_HAS_DIMENSIONS = 2
+        self.BF_HAS_POSITION   = 4
+        self.BF_HAS_PALETTE    = 8
+        self.BF_HAS_IMAGE      = 16
+
+    def parseSprite(self):
+        flags = unpack(self.file, 2, "H")
+
+        self.rle = flags & self.BF_RLE
+
+        self.palette = []
+
+        #Read file resolution
+        if (flags & self.BF_HAS_DIMENSIONS):
+            self.w = unpack(self.file, 2, "H")
+            self.h = unpack(self.file, 2, "H")
+
+        #Position on screen
+        if (flags & self.BF_HAS_POSITION):
+            self.position_x = unpack(self.file, 2, "H")
+            self.position_y = unpack(self.file, 2, "H")
+
+        #Read palette
+        if (flags & self.BF_HAS_PALETTE):
+            for i in range(256):
+                r = unpack(self.file, 1, "B")
+                g = unpack(self.file, 1, "B")
+                b = unpack(self.file, 1, "B")
+                p = unpack(self.file, 1, "B")
+                self.palette.append((r, g, b))
+        else:
+            for i in range(256):
+                self.palette.append((i, i, i))
+
+        if(self.debug):
+            print("type: {} rle: {} W: {} H: {} x: {} y: {}".format(flags, self.rle, self.w, self.h, self.position_x, self.position_y))
+
+#        if(flags & self.BF_HAS_IMAGE):
+#            print("pixels")
+
+        # Some images report wrong width
+        # so we need to check it
+        # if wrong we calculate correct width
+        curr = self.file.tell()
+        self.file.seek(0, os.SEEK_END)
+        file_size = self.file.tell()
+        self.file.seek(curr)
+
+        pixels_size = file_size - curr
+
+        #reportedWidth is used to crop image
+        self.reportedWidth = self.w
+
+        while(((self.w + 1) * self.h) <= pixels_size):
+            self.w += 1
+
+
+        return True
+
+    def unpackSpriteNormal(self):
+        self.pixels = []
+        for i in range(self.w*self.h):
+            #Convert palette index to RGB
+            num = unpack(self.file, 1, "B")
+            decode = self.palette[num]
+            self.pixels.append(decode)
+
+        return True
+
+    def unpackSpriteRle(self):
+        rows = unpack(self.file, 2, "H")
+        chunks = unpack(self.file, 2, "H")
+
+        if(self.debug):
+            print("rows: {} chunks: {}".format(rows, chunks))
+
+        copy = 0
+        skip = 0
+
+        pixels_encoded = [0] * (self.w*self.h)
+
+        dest = 0
+        destPitch = self.w# same as image width
+
+        while True:
+            for r in range(rows):
+                for c in range(chunks):
+                    skip = unpack(self.file, 2, "H")
+                    copy = unpack(self.file, 2, "H")
+                    for i in range(copy):
+                        value = unpack(self.file, 1, "B")
+                        pixels_encoded[dest + skip + i] = value
+#                    print("skip: {} copy: {} rows: {} chunks: {}".format(skip, copy, r, c))
+                dest += destPitch
+
+            rows = unpack(self.file, 2, "H")
+            chunks = unpack(self.file, 2, "H")
+
+            if(rows == 0):
+                break
+
+        self.pixels = []
+        for i in range(len(pixels_encoded)):
+            #Convert palette index to RGB
+            decode = self.palette[pixels_encoded[i]]
+            self.pixels.append(decode)
+
+        return True
+
+    def isRle(self):
+        return self.rle
+
+    def get_pixels(self):
+        return self.pixels
+
+    def get_palette(self):
+        return self.palette
+
+    def set_palette(self, palette):
+        self.palette = palette
+
+    def get_resolution(self):
+        return (self.reportedWidth, self.w, self.h)
+
+    def __exit__(self):
+        self.file.close()
+
 def decompress_audio(data, shift):
     out = []
     iCurValue = 0
@@ -212,6 +357,7 @@ if __name__ == '__main__':
     if(args.decode):
         os.makedirs(out_dir+"mp4", exist_ok=True)
         os.makedirs(out_dir+"wav", exist_ok=True)
+        os.makedirs(out_dir+"png", exist_ok=True)
 
     #Create extractor object
     extractor = BLBExtract(args.blb_file)
@@ -240,8 +386,35 @@ if __name__ == '__main__':
         data = extractor.extract(i)
         if(data is not None):
 
+            # 2 - images
+            if(extractor.files[i].type == 2):
+                #Save original file
+                f.write(data)
+                f.close()
+                #Decode image to png
+                if(args.decode):
+
+                    image_path = out_dir+extractor.id2fileName(i)
+                    image = ImageBLB(image_path)
+                    image.parseSprite()
+
+                    if(image.isRle()):
+                        image.unpackSpriteRle()
+                    else:
+                        image.unpackSpriteNormal()
+
+                    pixels = image.get_pixels()
+
+                    reportedWidth, w, h = image.get_resolution()
+
+                    #Save as png
+                    new_image = Image.new("RGB", (w, h))
+                    new_image.putdata(pixels)
+                    new_image = new_image.crop((0,0, reportedWidth, h))
+                    new_image.save(out_dir+'png/file'+str(i)+'.png')
+
             #7 and 8 - audio
-            if(extractor.files[i].type == 7 or extractor.files[i].type == 8):
+            elif(extractor.files[i].type == 7 or extractor.files[i].type == 8):
                 shift = extractor.files[i].extData
 
                 #File is compressed only if shift value is smaller than 0xFF
@@ -262,11 +435,12 @@ if __name__ == '__main__':
                     else:
                         wav_file.writeframes(data)
                     wav_file.close()
+                f.close()
 
             #10 - Video
             elif(extractor.files[i].type == 10):
                 f.write(data)
-
+                f.close()
                 #Decode video to mp4 using ffmpeg
                 if(args.decode):
                     ffmpeg_cmd = "ffmpeg -i {0}{1} -vcodec libx264 {0}mp4/{1}.mp4".format(out_dir, extractor.id2fileName(i))
@@ -275,7 +449,7 @@ if __name__ == '__main__':
             #others
             else:
                 f.write(data)
-        f.close()
+                f.close()
         files_processed += 1
         print("{}/{}      ".format(files_processed, extractor.fileCount), end="\r")
     print()
