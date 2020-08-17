@@ -12,6 +12,20 @@ git clone https://github.com/michal4132/pyBLB
 ```bash
 python3 pyBLB.py blb_file
 ```
+## Progress:
+- [x] BLB unpacking
+- [x] Image decoding
+- [ ] Image palette 
+- [x] Video decoding
+- [x] Audio decoding
+- [ ] Animation decoding
+
+- [ ] BLB packing
+- [ ] Video encoding
+- [ ] Audio encoding
+- [ ] Image encoding
+- [ ] Animation encoding
+
 ## BLBs
 a.blb  - sounds and music
 
