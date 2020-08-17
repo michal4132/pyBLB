@@ -6,11 +6,30 @@ pyBLB is a Python library for extracting Neverhood BLB files.
 ```bash
 git clone https://github.com/michal4132/pyBLB
 ```
+Linux:
+```bash
+cd pklib
+make
+```
 
 ## Usage
 
 ```bash
-python3 pyBLB.py blb_file
+usage: pyBLB.py [-h] [-p] [-o OUTPUT] [-c] [-d] [-v] blb_file
+
+Extract Neverhood BLB
+
+positional arguments:
+  blb_file
+
+optional arguments:
+  -h, --help            show this help message and exit
+  -p, --print           print data info and exit
+  -o OUTPUT, --output OUTPUT
+                        output directory
+  -c, --create          create json file for file reconstruction
+  -d, --decode          convert files to more "modern" format
+  -v, --verbose         show debug info
 ```
 ## Progress:
 - [x] BLB unpacking
