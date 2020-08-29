@@ -39,7 +39,7 @@ python3 pyBLB.py -c i.blb
 ```
 Pack:
 ```bash
-python3 pyBLB.py -i i.blb
+python3 pyBLB.py -i new.blb
 ```
 
 ## Progress
