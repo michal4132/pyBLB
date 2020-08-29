@@ -52,7 +52,7 @@ python3 pyBLB.py -i new.blb
 
 - [x] BLB packing NOTE: Packing only possible on Linux
 - [ ] Video encoding
-- [ ] Audio encoding
+- [x] Audio encoding NOTE: For now compression is disabled
 - [ ] Image encoding
 - [ ] Animation encoding
 
