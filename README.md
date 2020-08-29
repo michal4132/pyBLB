@@ -33,7 +33,16 @@ optional arguments:
   -v, --verbose         show debug info
 
 ```
-## Progress:
+Unpack:
+```bash
+python3 pyBLB.py -c i.blb
+```
+Pack:
+```bash
+python3 pyBLB.py -i i.blb
+```
+
+## Progress
 - [x] BLB unpacking
 - [x] Image decoding
 - [ ] Image palette 
