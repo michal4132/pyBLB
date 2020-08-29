@@ -15,21 +15,23 @@ make
 ## Usage
 
 ```bash
-usage: pyBLB.py [-h] [-p] [-o OUTPUT] [-c] [-d] [-v] blb_file
+usage: pyBLB.py [-h] [-i] [-p] [-o OUTPUT] [-c] [-d] [-v] blb_file
 
-Extract Neverhood BLB
+Unpack/Pack Neverhood BLB
 
 positional arguments:
   blb_file
 
 optional arguments:
   -h, --help            show this help message and exit
+  -i, --insert          pack BLB file
   -p, --print           print data info and exit
   -o OUTPUT, --output OUTPUT
                         output directory
   -c, --create          create json file for file reconstruction
   -d, --decode          convert files to more "modern" format
   -v, --verbose         show debug info
+
 ```
 ## Progress:
 - [x] BLB unpacking
