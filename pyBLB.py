@@ -250,7 +250,7 @@ class ImageBLB:
 
         return True
 
-    def unpackSpriteRle(self):
+    def unpackSpriteRle(self, w, h):
         rows = unpack(self.file, 2, "H")
         chunks = unpack(self.file, 2, "H")
 
@@ -260,7 +260,7 @@ class ImageBLB:
         copy = 0
         skip = 0
 
-        pixels_encoded = [0] * (self.w*self.h)
+        pixels_encoded = [0] * (w*h)
 
         dest = 0
         destPitch = self.w# same as image width
@@ -273,7 +273,7 @@ class ImageBLB:
                     for i in range(copy):
                         value = unpack(self.file, 1, "B")
                         pixels_encoded[dest + skip + i] = value
-#                    print("skip: {} copy: {} rows: {} chunks: {}".format(skip, copy, r, c))
+                    print("skip: {} copy: {} rows: {} chunks: {}".format(skip, copy, r, c))
                 dest += destPitch
 
             rows = unpack(self.file, 2, "H")
@@ -308,6 +308,181 @@ class ImageBLB:
     def __exit__(self):
         self.file.close()
 
+class BLBInserter:
+    def __init__(self, BLBpath, debug=False):
+        self.blb = open(BLBpath, "wb")
+        self.debug = debug
+        self.files = []
+        self.curr_offset = 0
+        self.doneFileHashes = False
+        self.filesInfoOffset = None
+        self.file_size_offset = None
+        self.extDataSize = None
+        self.extDataOffsets = []
+        self.fileCount = None
+        self.json_file = True #Not used for now
+
+        blb_json = open('data.json', "r")
+        self.json_data = json.load(blb_json)
+
+    def get_fileCount(self):
+        return int(self.json_data['header'][4])
+
+    def write_header(self):
+        #Header
+        id1 = struct.pack("I", int(self.json_data['header'][0])) #0x2004940 #UINT32LE
+        id2 = struct.pack("H", int(self.json_data['header'][1])) #7 #UINT16LE
+        #These valies should be written after processing files
+        self.extDataSize = struct.pack("H", int(self.json_data['header'][2])) #UINT16LE
+        fileSize = struct.pack("I", int(self.json_data['header'][3])) #UINT32LE
+        self.fileCount = struct.pack("I", int(self.json_data['header'][4])) #UINT32LE
+
+        self.blb.seek(0, 0)
+    
+        self.blb.write(id1)
+        self.blb.write(id2)
+        self.blb.write(self.extDataSize)
+        self.file_size_offset = self.blb.tell()
+        self.blb.write(fileSize)
+        self.blb.write(self.fileCount)
+
+        if(self.debug):
+            print("ID1: {}\nID2: {}\nextDataSize: {}\nfileSize: {}\nfileCount: {}".format(id1, id2, self.extDataSize, fileSize, self.fileCount))
+
+    def write_fileHashes(self):
+        for file in self.json_data['files']:
+            #Create files in memory for later
+            entry = Entry()
+            entry.fileHash = file['fileHash']
+            entry.type = file['type']
+            entry.comprType = file['comprType']
+            entry.extData = file['extData']
+            entry.extDataOffset = file['extDataOffset']
+            entry.timeStamp = file['timeStamp']
+            entry.offset = file['offset']
+            entry.size = file['size']
+            entry.diskSize = file['diskSize']
+            entry.realPath = file['realPath']
+            self.files.append(entry)
+
+            #Write file hash to BLB
+            fileHash = struct.pack("I", entry.fileHash)
+            self.blb.write(fileHash)
+        self.filesInfoOffset = self.blb.tell()
+
+    def compress_files(self):
+        #Compress files
+        for i in range(len(self.files)):
+            if(self.files[i].comprType == 3):
+                #Update uncompressed size
+                self.files[i].size = os.path.getsize(self.files[i].realPath)
+
+                out_path = "files_out/"+self.files[i].realPath.split("/")[1]
+
+                #Open file and compress
+                d_file = open(self.files[i].realPath, "rb")
+                compressed = pklib.compress(d_file.read())
+                c_file = open(out_path, "wb")
+                c_file.write(compressed)
+                c_file.close()
+
+                #Update compressed size
+                self.files[i].diskSize = os.path.getsize(out_path)
+
+                #Change file location to compressed file
+                self.files[i].realPath = out_path
+
+                print("Compressed: {}".format(i), end="\r")
+
+    def writeFilesInfo(self):
+        #Write file records
+
+        if not self.filesInfoOffset:
+            print("Error: Write File Hashes first")
+            return False
+
+        self.blb.seek(self.filesInfoOffset)
+
+        for i in range(len(self.files)):
+            type = struct.pack("b", self.files[i].type)
+            self.blb.write(type)
+
+            comprType = struct.pack("b", self.files[i].comprType)
+            self.blb.write(comprType)
+
+            extDataOffset = struct.pack("H", self.files[i].extDataOffset)
+            self.blb.write(extDataOffset)
+
+            timeStamp = struct.pack("I", self.files[i].timeStamp)
+            self.blb.write(timeStamp)
+
+            offset = struct.pack("I", self.files[i].offset)
+            self.blb.write(offset)
+
+            diskSize = struct.pack("I", self.files[i].diskSize)
+            self.blb.write(diskSize)
+
+            size = struct.pack("I", self.files[i].size)
+            self.blb.write(size)
+
+
+            if(self.debug):
+                print("Num: {} Type: {} ComprType: {} extDataOffset: {} timestamp: {} offset: {} diskSize: {} size: {}".format(i, self.files[i].type, self.files[i].comprType, extDataOffset, self.files[i].timeStamp, self.files[i].offset, self.files[i].diskSize, self.files[i].size))
+
+    def writeExtData(self):
+        #Write ext data
+        #extData is used to decompress audio files and maybe something else
+        extDataSizeInt = struct.unpack("H", self.extDataSize)[0]
+
+        extData = bytearray(extDataSizeInt)
+
+        for i in range(len(self.files)):
+            if(self.files[i].extDataOffset > 0):
+                extDataPayload = struct.pack("I", self.files[i].extData)
+                for extByteNum in range(4):
+                    extData[self.files[i].extDataOffset - 1 + extByteNum] = extDataPayload[extByteNum]
+        self.blb.write(extData)
+
+        self.curr_offset = self.blb.tell()
+
+    def insert(self, fileNum):
+        self.files[fileNum].offset = self.curr_offset
+        file = self.files[fileNum]
+        self.blb.seek(file.offset)
+
+        try:
+            source_file = open(file.realPath, "rb")
+        except:
+            print("No file: {}".format(fileNum))
+            return
+
+        #Get file size
+        source_file.seek(0, os.SEEK_END)
+        source_size = source_file.tell()
+        source_file.seek(0,0)
+
+        if(source_size <= file.diskSize):
+            data = source_file.read(file.diskSize)
+            self.blb.write(data)
+        else:
+            print("Error: file size incorrect file num: {} expected: {} real: {}".format(fileNum, file.diskSize, source_size))
+        self.curr_offset += (file.diskSize)
+
+        source_file.close()
+        return True
+
+    def write_size(self):
+        self.blb.seek(0, os.SEEK_END)
+        blb_size = self.blb.tell()
+
+        self.blb.seek(self.file_size_offset)
+        fileSize = struct.pack("I", int(blb_size)) #UINT32LE
+        self.blb.write(fileSize)
+
+
+    def __exit__(self):
+        self.blb.close()
+
 def decompress_audio(data, shift):
     out = []
     iCurValue = 0
@@ -331,8 +506,10 @@ if __name__ == '__main__':
 
     import argparse
 
-    parser = argparse.ArgumentParser(description='Extract Neverhood BLB')
+    parser = argparse.ArgumentParser(description='Unpack/Pack Neverhood BLB')
     parser.add_argument('blb_file')
+    parser.add_argument('-i', '--insert', action="store_true",
+        help="pack BLB file")
     parser.add_argument('-p', '--print', action="store_true",
         help="print data info and exit")
     parser.add_argument('-o', '--output', default="files/",
@@ -359,97 +536,122 @@ if __name__ == '__main__':
         os.makedirs(out_dir+"wav", exist_ok=True)
         os.makedirs(out_dir+"png", exist_ok=True)
 
-    #Create extractor object
-    extractor = BLBExtract(args.blb_file)
-
-    #Load files from BLB
-    extractor.load_files()
-
-    #Load ext data from BLB
-    extractor.load_extdata()
-
-    if(args.print):
-        blb.close()
-        sys.exit(0)
-
-    #Create JSON with BLB info
-    #This JSON is used to repack files
-    if(args.create):
-        extractor.create_json()
-
     files_processed = 0
-    print("0/{}      ".format(extractor.fileCount), end="\r")
-    for i in range(extractor.fileCount):
-        f = open(out_dir+extractor.id2fileName(i), "wb")
 
-        #Extract file with number i
-        data = extractor.extract(i)
-        if(data is not None):
+    #Pack
+    if(args.insert):
+        inserter = BLBInserter(args.blb_file)
+        inserter.write_header()
+        inserter.write_fileHashes()
+        inserter.compress_files()
+        inserter.writeFilesInfo()
+        inserter.writeExtData()
 
-            # 2 - images
-            if(extractor.files[i].type == 2):
-                #Save original file
-                f.write(data)
-                f.close()
-                #Decode image to png
-                if(args.decode):
 
-                    image_path = out_dir+extractor.id2fileName(i)
-                    image = ImageBLB(image_path)
-                    image.parseSprite()
+        fileCount = inserter.get_fileCount()
 
-                    if(image.isRle()):
-                        image.unpackSpriteRle()
+        print("0/{}                   ".format(fileCount), end="\r")
+        for i in range(fileCount):
+            inserter.insert(i)
+            files_processed += 1
+            print("{}/{}                   ".format(files_processed, fileCount), end="\r")
+        inserter.writeFilesInfo()
+
+
+        inserter.write_size()
+    #Unpack    
+    else:
+        #Create extractor object
+        extractor = BLBExtract(args.blb_file)
+
+        #Load files from BLB
+        extractor.load_files()
+
+        #Load ext data from BLB
+        extractor.load_extdata()
+
+        if(args.print):
+            blb.close()
+            sys.exit(0)
+
+        #Create JSON with BLB info
+        #This JSON is used to repack files
+        if(args.create):
+            extractor.create_json()
+    
+    
+        print("0/{}      ".format(extractor.fileCount), end="\r")
+        for i in range(extractor.fileCount):
+            f = open(out_dir+extractor.id2fileName(i), "wb")
+    
+            #Extract file with number i
+            data = extractor.extract(i)
+            if(data is not None):
+
+                # 2 - images
+                if(extractor.files[i].type == 2):
+                    #Save original file
+                    f.write(data)
+                    f.close()
+                    #Decode image to png
+                    if(args.decode):
+
+                        image_path = out_dir+extractor.id2fileName(i)
+                        image = ImageBLB(image_path)
+                        image.parseSprite()
+
+                        reportedWidth, w, h = image.get_resolution()
+
+                        if(image.isRle()):
+                            image.unpackSpriteRle(w, h)
+                        else:
+                            image.unpackSpriteNormal()
+
+                        pixels = image.get_pixels()
+
+                        #Save as png
+                        new_image = Image.new("RGB", (w, h))
+                        new_image.putdata(pixels)
+                        new_image = new_image.crop((0,0, reportedWidth, h))
+                        new_image.save(out_dir+'png/file'+str(i)+'.png')
+
+                #7 and 8 - audio
+                elif(extractor.files[i].type == 7 or extractor.files[i].type == 8):
+                    shift = extractor.files[i].extData
+
+                    #File is compressed only if shift value is smaller than 0xFF
+                    if(shift < 255):
+                        data = decompress_audio(data, shift)
+                        for sample in data:
+                            f.write(sample)
                     else:
-                        image.unpackSpriteNormal()
+                        f.write(data)
 
-                    pixels = image.get_pixels()
+                    #Decode audio to WAV
+                    if(args.decode):
+                        wav_file = wave.open(out_dir+'wav/file'+str(i)+'.wav', 'w')
+                        wav_file.setparams((1, 2, 22050, 0, 'NONE', 'not compressed'))
+                        if(shift < 255):
+                            for sample in data:
+                                wav_file.writeframes(sample)
+                        else:
+                            wav_file.writeframes(data)
+                        wav_file.close()
+                    f.close()
 
-                    reportedWidth, w, h = image.get_resolution()
+                #10 - Video
+                elif(extractor.files[i].type == 10):
+                    f.write(data)
+                    f.close()
+                    #Decode video to mp4 using ffmpeg
+                    if(args.decode):
+                        ffmpeg_cmd = "ffmpeg -i {0}{1} -vcodec rawvideo -pix_fmt yuv420p {0}mp4/{1}.avi".format(out_dir, extractor.id2fileName(i))
+                        out = os.popen(ffmpeg_cmd).read()
 
-                    #Save as png
-                    new_image = Image.new("RGB", (w, h))
-                    new_image.putdata(pixels)
-                    new_image = new_image.crop((0,0, reportedWidth, h))
-                    new_image.save(out_dir+'png/file'+str(i)+'.png')
-
-            #7 and 8 - audio
-            elif(extractor.files[i].type == 7 or extractor.files[i].type == 8):
-                shift = extractor.files[i].extData
-
-                #File is compressed only if shift value is smaller than 0xFF
-                if(shift < 255):
-                    data = decompress_audio(data, shift)
-                    for sample in data:
-                        f.write(sample)
+                #others
                 else:
                     f.write(data)
-
-                #Decode audio to WAV
-                if(args.decode):
-                    wav_file = wave.open(out_dir+'wav/file'+str(i)+'.wav', 'w')
-                    wav_file.setparams((1, 2, 22050, 0, 'NONE', 'not compressed'))
-                    if(shift < 255):
-                        for sample in data:
-                            wav_file.writeframes(sample)
-                    else:
-                        wav_file.writeframes(data)
-                    wav_file.close()
-                f.close()
-
-            #10 - Video
-            elif(extractor.files[i].type == 10):
-                f.write(data)
-                f.close()
-                #Decode video to mp4 using ffmpeg
-                if(args.decode):
-                    ffmpeg_cmd = "ffmpeg -i {0}{1} -vcodec libx264 {0}mp4/{1}.mp4".format(out_dir, extractor.id2fileName(i))
-                    out = os.popen(ffmpeg_cmd).read()
-
-            #others
-            else:
-                f.write(data)
-                f.close()
-        files_processed += 1
-        print("{}/{}      ".format(files_processed, extractor.fileCount), end="\r")
+                    f.close()
+            files_processed += 1
+            print("{}/{}      ".format(files_processed, extractor.fileCount), end="\r")
     print()
