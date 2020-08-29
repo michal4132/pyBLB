@@ -39,7 +39,7 @@ optional arguments:
 - [x] Audio decoding
 - [ ] Animation decoding
 
-- [x] BLB packing
+- [x] BLB packing NOTE: Packing only possible on Linux
 - [ ] Video encoding
 - [ ] Audio encoding
 - [ ] Image encoding
