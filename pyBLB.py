@@ -133,7 +133,7 @@ class BLBExtract:
                         self.files[i].extData[2] = extData[self.extDataOffsets[i] + 1]
                         self.files[i].extData[3] = extData[self.extDataOffsets[i] + 2]
                     if(self.json_file):
-                        self.json_data['files'][i]['extData'] = self.files[i].extData
+                        self.json_data['files'][i]['extData'] = struct.unpack("I", self.files[i].extData)[0]
                 else:
                     self.files[i].extData = b"\x00\x00\x00\x00"
                 if(args.verbose):
