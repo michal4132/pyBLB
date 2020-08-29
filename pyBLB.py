@@ -132,12 +132,12 @@ class BLBExtract:
                         self.files[i].extData[1] = extData[self.extDataOffsets[i]    ]
                         self.files[i].extData[2] = extData[self.extDataOffsets[i] + 1]
                         self.files[i].extData[3] = extData[self.extDataOffsets[i] + 2]
-                        if(self.json_file):
-                            self.json_data['files'][i]['extData'] = struct.unpack("I", self.files[i].extData)[0]
+                    if(self.json_file):
+                        self.json_data['files'][i]['extData'] = self.files[i].extData
                 else:
                     self.files[i].extData = b"\x00\x00\x00\x00"
                 if(args.verbose):
-                    print("Num: {} extData: {}".format(i, struct.unpack("I", self.files[i].extData)[0]))
+                    print("Num: {} extData: {}".format(i, self.files[i].extData))
 
 
     def create_json(self, json_path='data.json'):
@@ -356,7 +356,11 @@ class BLBInserter:
             entry.fileHash = file['fileHash']
             entry.type = file['type']
             entry.comprType = file['comprType']
-            entry.extData = file['extData']
+            #Dirty fix for audio
+            if(file['type'] == 7 or file['type'] == 8):
+                entry.extData = 255 # 0xFF means audio is not compressed
+            else:                
+                entry.extData = file['extData']
             entry.extDataOffset = file['extDataOffset']
             entry.timeStamp = file['timeStamp']
             entry.offset = file['offset']
@@ -394,6 +398,9 @@ class BLBInserter:
                 self.files[i].realPath = out_path
 
                 print("Compressed: {}".format(i), end="\r")
+            else:
+                self.files[i].diskSize = os.path.getsize(self.files[i].realPath)
+                self.files[i].size = os.path.getsize(self.files[i].realPath)
 
     def writeFilesInfo(self):
         #Write file records
@@ -440,8 +447,11 @@ class BLBInserter:
         for i in range(len(self.files)):
             if(self.files[i].extDataOffset > 0):
                 extDataPayload = struct.pack("I", self.files[i].extData)
-                for extByteNum in range(4):
-                    extData[self.files[i].extDataOffset - 1 + extByteNum] = extDataPayload[extByteNum]
+                if(extDataSizeInt == len(self.files)):
+                    extData[self.files[i].extDataOffset - 1] = extDataPayload[0]
+                else:
+                    for extByteNum in range(4):
+                        extData[self.files[i].extDataOffset - 1 + extByteNum] = extDataPayload[extByteNum]
         self.blb.write(extData)
 
         self.curr_offset = self.blb.tell()
@@ -462,7 +472,7 @@ class BLBInserter:
         source_size = source_file.tell()
         source_file.seek(0,0)
 
-        if(source_size <= file.diskSize):
+        if(source_size <= file.diskSize * 2):
             data = source_file.read(file.diskSize)
             self.blb.write(data)
         else:
