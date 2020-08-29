@@ -372,6 +372,7 @@ class BLBInserter:
 
     def compress_files(self):
         #Compress files
+        os.makedirs("files_out/", exist_ok=True)
         for i in range(len(self.files)):
             if(self.files[i].comprType == 3):
                 #Update uncompressed size
