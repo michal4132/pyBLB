@@ -55,7 +55,7 @@ class BLBExtract:
         #Check if file is correct
         if(id1 != 0x2004940 or id2 != 7 or self.fileSize != self.blb_size):
             print("Error: Corrupted BLB")
-            return False
+            return
 
         if(args.verbose):
             print("ID1: {}\nID2: {}\nextDataSize: {}\nfileSize: {}\nfileCount: {}".format(id1, id2, self.extDataSize, self.fileSize, self.fileCount))
@@ -66,7 +66,9 @@ class BLBExtract:
         if self.files[id].type == 2:
             fileName = "file{}_image.nhi".format(id)
         elif self.files[id].type == 3:
-            fileNmae = "files{}_palette".format(id)
+            fileName = "files{}_palette".format(id)
+        elif self.files[id].type == 6:
+            fileName = "files{}.txt".format(id)
         elif self.files[id].type == 7 or self.files[id].type == 8:
             fileName = "file{}_audio".format(id)
         elif self.files[id].type == 10:
@@ -124,6 +126,8 @@ class BLBExtract:
                    #a.blb - 1 byte
                     if(self.extDataSize == len(self.files)):
                         self.files[i].extData = extData[self.extDataOffsets[i] - 1]
+                        if(self.json_file):
+                            self.json_data['files'][i]['extData'] = self.files[i].extData
                     else:
                         #Other BLBs use 4 bytes
                         #Read 4 bytes from extData
@@ -132,8 +136,8 @@ class BLBExtract:
                         self.files[i].extData[1] = extData[self.extDataOffsets[i]    ]
                         self.files[i].extData[2] = extData[self.extDataOffsets[i] + 1]
                         self.files[i].extData[3] = extData[self.extDataOffsets[i] + 2]
-                    if(self.json_file):
-                        self.json_data['files'][i]['extData'] = struct.unpack("I", self.files[i].extData)[0]
+                        if(self.json_file):
+                            self.json_data['files'][i]['extData'] = struct.unpack("I", self.files[i].extData)[0]
                 else:
                     self.files[i].extData = b"\x00\x00\x00\x00"
                 if(args.verbose):
@@ -177,6 +181,7 @@ class ImageBLB:
         self.h = None
         self.reportedWidth = None
         self.rle = None
+        self.flags = None
         self.position_x = 0
         self.position_y = 0
 
@@ -187,24 +192,24 @@ class ImageBLB:
         self.BF_HAS_IMAGE      = 16
 
     def parseSprite(self):
-        flags = unpack(self.file, 2, "H")
+        self.flags = unpack(self.file, 2, "H")
 
-        self.rle = flags & self.BF_RLE
+        self.rle = self.flags & self.BF_RLE
 
         self.palette = []
 
         #Read file resolution
-        if (flags & self.BF_HAS_DIMENSIONS):
+        if (self.flags & self.BF_HAS_DIMENSIONS):
             self.w = unpack(self.file, 2, "H")
             self.h = unpack(self.file, 2, "H")
 
         #Position on screen
-        if (flags & self.BF_HAS_POSITION):
+        if (self.flags & self.BF_HAS_POSITION):
             self.position_x = unpack(self.file, 2, "H")
             self.position_y = unpack(self.file, 2, "H")
 
         #Read palette
-        if (flags & self.BF_HAS_PALETTE):
+        if (self.flags & self.BF_HAS_PALETTE):
             for i in range(256):
                 r = unpack(self.file, 1, "B")
                 g = unpack(self.file, 1, "B")
@@ -298,6 +303,9 @@ class ImageBLB:
 
     def get_palette(self):
         return self.palette
+
+    def get_flags(self):
+        return self.flags
 
     def set_palette(self, palette):
         self.palette = palette
@@ -551,6 +559,9 @@ if __name__ == '__main__':
 
     #Pack
     if(args.insert):
+        if(platform.system() != "Linux"):
+            print("Packing only works on Linux")
+            sys.exit(1)
         inserter = BLBInserter(args.blb_file)
         inserter.write_header()
         inserter.write_fileHashes()
