@@ -44,17 +44,23 @@ python3 pyBLB.py -i new.blb
 
 ## Progress
 - [x] BLB unpacking
-- [x] Image decoding
-- [ ] Image palette 
-- [x] Video decoding
-- [x] Audio decoding
-- [ ] Animation decoding
-
 - [x] BLB packing NOTE: Packing only possible on Linux
-- [ ] Video encoding
-- [x] Audio encoding NOTE: For now compression is disabled
-- [ ] Image encoding
-- [ ] Animation encoding
+- [x] Image
+  - [x] decoding
+  - [x] encoding NOTE: Only Format 26
+- [ ] Image palette
+  - [x] reading
+  - [x] writting
+  - [ ] auto matching
+- [x] Video
+  - [x] decoding
+  - [ ] encoding NOTE: Possible using RAD Game Tools
+- [x] Audio
+  - [x] decoding
+  - [x] encoding NOTE: For now compression is disabled
+- [ ] Animation
+  - [ ] decoding
+  - [ ] encoding
 
 ## BLBs
 a.blb  - sounds and music
