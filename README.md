@@ -44,7 +44,7 @@ python3 pyBLB.py -i new.blb
 
 ## Progress
 - [x] BLB unpacking
-- [x] BLB packing NOTE: Packing only possible on Linux
+- [x] BLB packing
 - [x] Image
   - [x] decoding
   - [x] encoding NOTE: Only Format 26
