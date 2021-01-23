@@ -5,10 +5,8 @@ import struct
 import json
 import wave
 from PIL import Image
-if(platform.system() == "Linux"):
-    import pklib
-else:
-    import pwexplode
+import pklib
+
 
 class Entry:
     fileHash = None
@@ -161,10 +159,7 @@ class BLBExtract:
         elif(file.comprType == 3):
             compressed = self.blb.read(file.diskSize)
 
-            if(platform.system() == "Linux"):
-                fileData = pklib.decompress(compressed)
-            else:
-                fileData = pwexplode.explode(compressed)
+            fileData = pklib.decompress(compressed)
 
         return fileData
 
@@ -559,9 +554,6 @@ if __name__ == '__main__':
 
     #Pack
     if(args.insert):
-        if(platform.system() != "Linux"):
-            print("Packing only works on Linux")
-            sys.exit(1)
         inserter = BLBInserter(args.blb_file)
         inserter.write_header()
         inserter.write_fileHashes()

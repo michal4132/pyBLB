@@ -1,7 +1,7 @@
 import ctypes
 import os
 import sys
-
+import platform
 
 class TDataInfo(ctypes.Structure):
     _fields_ = [('pbInBuff', ctypes.POINTER(ctypes.c_ubyte)),
@@ -9,8 +9,10 @@ class TDataInfo(ctypes.Structure):
                 ('pbOutBuff', ctypes.POINTER(ctypes.c_ubyte)),
                 ('pbOutBuffEnd', ctypes.POINTER(ctypes.c_ubyte))]
 
-
-dll_name = "./pklib/pklib.so"
+if(platform.system() == "Linux"):
+    dll_name = "./pklib/pklib.so"
+else:
+    dll_name = "./pklib/pklib.32.dll"
 
 dll = ctypes.CDLL(dll_name)
 
