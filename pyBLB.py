@@ -761,7 +761,7 @@ if __name__ == '__main__':
     #Unpack    
     else:
         #Create extractor object
-        extractor = BLBExtract(args.blb_file)
+        extractor = BLBExtract(args.blb_file, debug=args.verbose)
 
         #Load files from BLB
         extractor.load_files()
@@ -796,7 +796,7 @@ if __name__ == '__main__':
                     if(args.decode):
 
                         image_path = out_dir+extractor.id2fileName(i)
-                        image = ImageBLB(image_path, debug=False)
+                        image = ImageBLB(image_path, debug=args.verbose)
                         image.parseSprite()
 
                         reportedWidth, w, h = image.get_resolution()
@@ -825,7 +825,7 @@ if __name__ == '__main__':
                         extData = extractor.files[i].extData
                         file_hash = extractor.files[i].fileHash
 
-                        anim = Animation(data, extData, file_hash, debug=args.debug)
+                        anim = Animation(data, extData, file_hash, debug=args.verbose)
                             
                         try:
                             anim.parseAnim()
