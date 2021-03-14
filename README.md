@@ -59,7 +59,7 @@ python3 pyBLB.py -i new.blb
   - [x] decoding
   - [x] encoding NOTE: For now compression is disabled
 - [ ] Animation
-  - [ ] decoding
+  - [x] decoding
   - [ ] encoding
 
 ## BLBs
