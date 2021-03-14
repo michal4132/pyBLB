@@ -7,7 +7,6 @@ import wave
 from PIL import Image
 import pklib
 
-
 class Entry:
     fileHash = None
     type = None
@@ -26,12 +25,12 @@ class BLBExtract:
     def unpack(self, count, dtype):
         return struct.unpack(dtype, self.blb.read(count))[0]
 
-    def __init__(self, BLBpath, debug=False):
+    def __init__(self, BLBpath, debug=False, json_file=True):
         self.blb = open(BLBpath, "rb")
         self.debug = debug
         self.files = []
         self.extDataOffsets = []
-        self.json_file = True #Not used for now
+        self.json_file = json_file #Not used for now
 
         self.json_data = {}
         self.json_data['files'] = []
@@ -55,7 +54,7 @@ class BLBExtract:
             print("Error: Corrupted BLB")
             return
 
-        if(args.verbose):
+        if(debug):
             print("ID1: {}\nID2: {}\nextDataSize: {}\nfileSize: {}\nfileCount: {}".format(id1, id2, self.extDataSize, self.fileSize, self.fileCount))
 
 
@@ -64,9 +63,11 @@ class BLBExtract:
         if self.files[id].type == 2:
             fileName = "file{}_image.nhi".format(id)
         elif self.files[id].type == 3:
-            fileName = "files{}_palette".format(id)
+            fileName = "file{}_palette".format(id)
+        elif self.files[id].type == 4:
+            fileName = "file{}_anim".format(id)
         elif self.files[id].type == 6:
-            fileName = "files{}.txt".format(id)
+            fileName = "file{}.txt".format(id)
         elif self.files[id].type == 7 or self.files[id].type == 8:
             fileName = "file{}_audio".format(id)
         elif self.files[id].type == 10:
@@ -92,6 +93,7 @@ class BLBExtract:
             self.files[i].extData = None
 
             extDataOffset = self.unpack(2, "H") #UINT16LE
+         
             self.extDataOffsets.append(extDataOffset)
 
             self.files[i].timeStamp = self.unpack(4, "I") #UINT32LE
@@ -110,12 +112,12 @@ class BLBExtract:
                 self.json_data['files'][i]['size'] = self.files[i].size
                 self.json_data['files'][i]['realPath'] = out_dir+self.id2fileName(i)
 
-            if(args.verbose or args.print):
+            if(self.debug):
                 print("Num: {} FileHash: {} FileType: {} ComprType: {} extDataOffset: {} timestamp: {} offset: {} diskSize: {} size: {}".format(i, self.files[i].fileHash, self.files[i].type, self.files[i].comprType, extDataOffset, self.files[i].timeStamp, self.files[i].offset, self.files[i].diskSize, self.files[i].size))
 
     def load_extdata(self):
         #Load ext data
-        #extData is used to decompress audio files and maybe something else
+        #extData is used to decompress audio files and contains width+height for images
         if(self.extDataSize > 0):
             extData = self.blb.read(self.extDataSize)
             for i in range(self.fileCount):
@@ -123,7 +125,10 @@ class BLBExtract:
                 if(self.extDataOffsets[i] > 0):
                    #a.blb - 1 byte
                     if(self.extDataSize == len(self.files)):
-                        self.files[i].extData = extData[self.extDataOffsets[i] - 1]
+                        if(self.extDataOffsets[i] > self.extDataSize):
+                            self.files[i].extData = 0xFF
+                        else:                    
+                            self.files[i].extData = extData[self.extDataOffsets[i] - 1]
                         if(self.json_file):
                             self.json_data['files'][i]['extData'] = self.files[i].extData
                     else:
@@ -138,8 +143,14 @@ class BLBExtract:
                             self.json_data['files'][i]['extData'] = struct.unpack("I", self.files[i].extData)[0]
                 else:
                     self.files[i].extData = b"\x00\x00\x00\x00"
-                if(args.verbose):
+                if(self.debug):
                     print("Num: {} extData: {}".format(i, self.files[i].extData))
+
+    def getFile(self, hash):
+        for idx, val in enumerate(self.files):
+
+            if(val.fileHash == hash):                
+                return self.extract(idx), val.extData
 
 
     def create_json(self, json_path='data.json'):
@@ -153,13 +164,22 @@ class BLBExtract:
 
         #Uncompressed file
         if(file.comprType == 1):
-            fileData = self.blb.read(file.diskSize)
-
+            if(file.size == 0):
+                fileData = self.blb.read(file.diskSize)
+            else:
+                fileData = self.blb.read(file.size)
         #Compressed file
         elif(file.comprType == 3):
-            compressed = self.blb.read(file.diskSize)
+            if(file.type == 8):
+                compressed = self.blb.read(file.size)
+            else:
+                compressed = self.blb.read(file.diskSize)
 
             fileData = pklib.decompress(compressed)
+
+        #Dirty hack for dummy files
+        elif(file.comprType == 101):
+            fileData,extDataUnused = self.getFile(file.diskSize)
 
         return fileData
 
@@ -167,8 +187,14 @@ class BLBExtract:
         self.blb.close()
 
 class ImageBLB:
-    def __init__(self, file_path, debug=False):
-        self.file = open(file_path, "rb")
+    def __init__(self, input_data, is_file=True, debug=False):
+        self.is_file = is_file
+        if(is_file):
+            file_path = input_data
+            self.file = open(file_path, "rb")
+        else:
+            #TODO: RENAME FILE_PATH
+            self.data = bytearray(input_data)
         self.debug = debug
         self.palette = []
         self.pixels = []
@@ -185,9 +211,20 @@ class ImageBLB:
         self.BF_HAS_POSITION   = 4
         self.BF_HAS_PALETTE    = 8
         self.BF_HAS_IMAGE      = 16
+        
+    def unPack(self, length, dtype):
+        if(self.is_file):
+            return unpack(self.file, length, dtype)
+        else:
+            tmp = bytearray(b'')
+            for i in range(length):
+                tmp+=bytes([self.data[0]])
+                del self.data[0]
+            return struct.unpack(dtype, tmp)[0]
+            
 
     def parseSprite(self):
-        self.flags = unpack(self.file, 2, "H")
+        self.flags = self.unPack(2, "H")
 
         self.rle = self.flags & self.BF_RLE
 
@@ -195,47 +232,49 @@ class ImageBLB:
 
         #Read file resolution
         if (self.flags & self.BF_HAS_DIMENSIONS):
-            self.w = unpack(self.file, 2, "H")
-            self.h = unpack(self.file, 2, "H")
+            self.w = self.unPack(2, "H")
+            self.h = self.unPack(2, "H")
 
         #Position on screen
         if (self.flags & self.BF_HAS_POSITION):
-            self.position_x = unpack(self.file, 2, "H")
-            self.position_y = unpack(self.file, 2, "H")
+            self.position_x = self.unPack(2, "H")
+            self.position_y = self.unPack(2, "H")
 
         #Read palette
         if (self.flags & self.BF_HAS_PALETTE):
             for i in range(256):
-                r = unpack(self.file, 1, "B")
-                g = unpack(self.file, 1, "B")
-                b = unpack(self.file, 1, "B")
-                p = unpack(self.file, 1, "B")
+                r = self.unPack(1, "B")
+                g = self.unPack(1, "B")
+                b = self.unPack(1, "B")
+                p = self.unPack(1, "B")
                 self.palette.append((r, g, b))
         else:
             for i in range(256):
                 self.palette.append((i, i, i))
 
         if(self.debug):
-            print("type: {} rle: {} W: {} H: {} x: {} y: {}".format(flags, self.rle, self.w, self.h, self.position_x, self.position_y))
+            print("type: {} rle: {} W: {} H: {} x: {} y: {}".format(self.flags, self.rle, self.w, self.h, self.position_x, self.position_y))
 
 #        if(flags & self.BF_HAS_IMAGE):
 #            print("pixels")
 
-        # Some images report wrong width
-        # so we need to check it
-        # if wrong we calculate correct width
-        curr = self.file.tell()
-        self.file.seek(0, os.SEEK_END)
-        file_size = self.file.tell()
-        self.file.seek(curr)
+#       TODO REMOVE THIS
+#        # Some images report wrong width
+#        # so we need to check it
+#        # if wrong we calculate correct width
+#        if(self.is_file):
+#            curr = self.file.tell()
+#            self.file.seek(0, os.SEEK_END)
+#            file_size = self.file.tell()
+#            self.file.seek(curr)
 
-        pixels_size = file_size - curr
+#            pixels_size = file_size - curr
 
-        #reportedWidth is used to crop image
-        self.reportedWidth = self.w
+#            #reportedWidth is used to crop image
+#            self.reportedWidth = self.w
 
-        while(((self.w + 1) * self.h) <= pixels_size):
-            self.w += 1
+#            while(((self.w + 1) * self.h) <= pixels_size):
+#                self.w += 1
 
 
         return True
@@ -244,15 +283,16 @@ class ImageBLB:
         self.pixels = []
         for i in range(self.w*self.h):
             #Convert palette index to RGB
-            num = unpack(self.file, 1, "B")
+            num = self.unPack(1, "B")
             decode = self.palette[num]
             self.pixels.append(decode)
 
         return True
 
     def unpackSpriteRle(self, w, h):
-        rows = unpack(self.file, 2, "H")
-        chunks = unpack(self.file, 2, "H")
+    
+        rows = self.unPack(2, "H")
+        chunks = self.unPack(2, "H")
 
         if(self.debug):
             print("rows: {} chunks: {}".format(rows, chunks))
@@ -263,21 +303,22 @@ class ImageBLB:
         pixels_encoded = [0] * (w*h)
 
         dest = 0
-        destPitch = self.w# same as image width
+        destPitch = w# same as image width
 
         while True:
             for r in range(rows):
                 for c in range(chunks):
-                    skip = unpack(self.file, 2, "H")
-                    copy = unpack(self.file, 2, "H")
+                    skip = self.unPack(2, "H")
+                    copy = self.unPack(2, "H")
                     for i in range(copy):
-                        value = unpack(self.file, 1, "B")
+                        value = self.unPack(1, "B")
                         pixels_encoded[dest + skip + i] = value
-                    print("skip: {} copy: {} rows: {} chunks: {}".format(skip, copy, r, c))
+                    if(self.debug):
+                        print("skip: {} copy: {} rows: {} chunks: {}".format(skip, copy, r, c))
                 dest += destPitch
 
-            rows = unpack(self.file, 2, "H")
-            chunks = unpack(self.file, 2, "H")
+            rows = self.unPack(2, "H")
+            chunks = self.unPack(2, "H")
 
             if(rows == 0):
                 break
@@ -308,9 +349,152 @@ class ImageBLB:
     def get_resolution(self):
         return (self.reportedWidth, self.w, self.h)
 
-    def __exit__(self):
-        self.file.close()
+    def get_position(self):
+        return (self.position_x, self.position_y)
 
+    def __exit__(self):
+        if(self.is_file):
+            self.file.close()
+
+
+class AnimFrameInfo:
+    frameHash = None
+    counter = None
+    drawOffset_x = None
+    drawOffset_y = None
+    drawOffset_width = None
+    drawOffset_height = None
+    deltaX = None
+    deltaY = None
+    collisionBoundsOffset_x = None
+    collisionBoundsOffset_y = None
+    collisionBoundsOffset_width = None
+    collisionBoundsOffset_height = None
+    spriteDataOffs = None
+
+class Animation:
+    def __init__(self, input_data, extData, hash, debug=False):
+        self.debug = debug
+        self.file_pointer = 0
+        self.spriteDataPos = None
+        self.palette = []
+        self.input_data = input_data
+        self.hash = hash
+        self.frames = []
+        self.spriteDataOfs = None
+        
+        #Load width and height from extData
+
+        w = bytearray()
+        for i in range(2):
+            w.append(extData[i])
+
+        h = bytearray()
+        for i in range(2):
+            h.append(extData[i+2])
+
+        self.w = struct.unpack("H", w)[0]
+        self.h = struct.unpack("H", h)[0]
+
+
+    def unPack(self, count, dtype):
+        tmp = b''
+        for i in range(count):
+            tmp+=bytes([self.input_data[self.file_pointer]])
+            self.file_pointer+=1
+        return struct.unpack(dtype, tmp)[0]
+
+        
+    def parseAnim(self):
+        animListCount = self.unPack(2, "H")
+        animInfoStartOfs = self.unPack(2, "H")
+        self.spriteDataOfs = self.unPack(4, "I")
+        paletteDataOfs = self.unPack(4, "I")
+
+        if(self.debug):
+            print("animListCount: {} animInfoStartOfs: {} spriteDataOfs: {} paletteDataOfs: {}".format(animListCount, animInfoStartOfs, self.spriteDataOfs, paletteDataOfs))
+
+        for animListIndex in range(animListCount):
+            hash1 = self.unPack(4, "I")
+            if(hash1 == self.hash):
+                break
+
+        self.spriteDataPos = self.spriteDataOfs
+
+        frameCount = self.unPack(2, "H") 
+        frameListStartOfs = self.unPack(2, "H")
+
+        frameListPos = animInfoStartOfs
+
+        if(self.debug):
+            print("frame_count: {} frame_list_pos: {} frameListStartOfs: {}".format(frameCount, frameListPos, frameListStartOfs))
+
+        if(paletteDataOfs > 0):
+            if(self.debug):
+                print("Palette present")
+            paletteDataPos = paletteDataOfs
+            self.file_pointer = paletteDataPos
+            for i in range(256):
+                r = self.unPack(1, "B")
+                g = self.unPack(1, "B")
+                b = self.unPack(1, "B")
+                p = self.unPack(1, "B")
+                self.palette.append((r, g, b))
+
+        #Jump to position with frames data
+        self.file_pointer = animInfoStartOfs
+
+        for frameIndex in range(frameCount):
+            frameInfo = AnimFrameInfo()
+    
+            frameInfo.frameHash = self.unPack(4, "I")
+            frameInfo.counter = self.unPack(2, "H")
+
+            frameInfo.drawOffset_x = self.unPack(2, "h")
+            frameInfo.drawOffset_y = self.unPack(2, "h")
+            frameInfo.drawOffset_width = self.unPack(2, "H")
+            frameInfo.drawOffset_height = self.unPack(2, "H")
+
+            frameInfo.deltaX = self.unPack(2, "H")
+            frameInfo.deltaY = self.unPack(2, "H")
+
+            frameInfo.collisionBoundsOffset_x = self.unPack(2, "H")
+            frameInfo.collisionBoundsOffset_y = self.unPack(2, "H")
+            frameInfo.collisionBoundsOffset_width = self.unPack(2, "H")
+            frameInfo.collisionBoundsOffset_height = self.unPack(2, "H")
+
+            #Unused data
+            self.unPack(2, "H")
+
+            frameInfo.spriteDataOffs = self.unPack(4, "I")
+
+            self.frames.append(frameInfo)
+    
+            if(self.debug):
+                print("id : {}, off: {}, hash: {}, counter: {}, w: {}, y: {}, pos_x: {}, pos_y: {}".format(frameIndex, frameInfo.spriteDataOffs, frameInfo.frameHash, frameInfo.counter, frameInfo.drawOffset_width, frameInfo.drawOffset_height, frameInfo.drawOffset_x, frameInfo.drawOffset_y))
+
+    def getFrame(self, num):
+    
+        self.file_pointer = self.spriteDataOfs + self.frames[num].spriteDataOffs
+        
+        image = ImageBLB(self.input_data[self.file_pointer:], is_file=False)
+    
+        image.set_palette(self.palette)
+        image.unpackSpriteRle(self.frames[num].drawOffset_width, self.frames[num].drawOffset_height)
+
+        pixels = image.get_pixels()
+        
+        return self.frames[num], pixels
+        
+    def numOfFrames(self):
+        return len(self.frames)
+        
+    def setPalette(self, palette):
+        self.palette = palette
+    
+    def getPalette(self):
+        return self.palette
+    
 class BLBInserter:
     def __init__(self, BLBpath, debug=False):
         self.blb = open(BLBpath, "wb")
@@ -498,7 +682,7 @@ class BLBInserter:
         self.blb.close()
 
 def decompress_audio(data, shift):
-    out = []
+    out = bytearray()
     iCurValue = 0
 
     for i in data:
@@ -511,7 +695,7 @@ def decompress_audio(data, shift):
 
         iCurValue += one
         if((iCurValue<<shift) < 32768 and (iCurValue<<shift) >= -32768):
-            out.append( struct.pack("h", iCurValue<<shift) )
+            out+=struct.pack("h", iCurValue<<shift)
     return out
 
 
@@ -549,6 +733,7 @@ if __name__ == '__main__':
         os.makedirs(out_dir+"mp4", exist_ok=True)
         os.makedirs(out_dir+"wav", exist_ok=True)
         os.makedirs(out_dir+"png", exist_ok=True)
+        os.makedirs(out_dir+"gif", exist_ok=True)
 
     files_processed = 0
 
@@ -611,7 +796,7 @@ if __name__ == '__main__':
                     if(args.decode):
 
                         image_path = out_dir+extractor.id2fileName(i)
-                        image = ImageBLB(image_path)
+                        image = ImageBLB(image_path, debug=False)
                         image.parseSprite()
 
                         reportedWidth, w, h = image.get_resolution()
@@ -626,9 +811,55 @@ if __name__ == '__main__':
                         #Save as png
                         new_image = Image.new("RGB", (w, h))
                         new_image.putdata(pixels)
-                        new_image = new_image.crop((0,0, reportedWidth, h))
+                        #TODO REMOVE
+#                        new_image = new_image.crop((0,0, reportedWidth, h))
                         new_image.save(out_dir+'png/file'+str(i)+'.png')
+                        
+                # 4 - animations
+                elif(extractor.files[i].type == 4):
+                    #Save original file
+                    f.write(data)
+                    f.close()
 
+                    if(args.decode):           
+                        extData = extractor.files[i].extData
+                        file_hash = extractor.files[i].fileHash
+
+                        anim = Animation(data, extData, file_hash, debug=args.debug)
+                            
+                        try:
+                            anim.parseAnim()
+                    
+                            #Get max width and height
+                            x = []
+                            y = []
+                            for j in range(anim.numOfFrames()):
+                                frame, pixels = anim.getFrame(j)
+  
+                                x.append(frame.drawOffset_width)
+                                y.append(frame.drawOffset_height)
+
+                            width = max(x)
+                            height = max(y)
+                    
+                    
+                            imgs = []
+                            for j in range(anim.numOfFrames()):
+                                frame, pixels = anim.getFrame(j)
+
+                                bg = Image.new('RGB', (width, height))
+
+                                img =  Image.new("RGB", (frame.drawOffset_width, frame.drawOffset_height))
+                                img.putdata(pixels)
+    
+                                bg.paste(img, (0, 0))
+
+                                imgs.append(bg)
+
+                            imgs[0].save(out_dir+'gif/file'+str(i)+'.gif', save_all=True, append_images=imgs[1:], optimize=False, duration=40, loop=0)
+                        except:
+                            pass
+                    
                 #7 and 8 - audio
                 elif(extractor.files[i].type == 7 or extractor.files[i].type == 8):
                     shift = extractor.files[i].extData
@@ -636,20 +867,14 @@ if __name__ == '__main__':
                     #File is compressed only if shift value is smaller than 0xFF
                     if(shift < 255):
                         data = decompress_audio(data, shift)
-                        for sample in data:
-                            f.write(sample)
-                    else:
-                        f.write(data)
+                        
+                    f.write(data)
 
                     #Decode audio to WAV
                     if(args.decode):
                         wav_file = wave.open(out_dir+'wav/file'+str(i)+'.wav', 'w')
                         wav_file.setparams((1, 2, 22050, 0, 'NONE', 'not compressed'))
-                        if(shift < 255):
-                            for sample in data:
-                                wav_file.writeframes(sample)
-                        else:
-                            wav_file.writeframes(data)
+                        wav_file.writeframes(data)
                         wav_file.close()
                     f.close()
 
