@@ -62,6 +62,12 @@ python3 pyBLB.py -i new.blb
   - [x] decoding
   - [ ] encoding
 
+## TODO
+- add helper scripts
+  - image packing
+  - text encoder
+  - palette parser
+
 ## BLBs
 a.blb  - sounds and music
 
